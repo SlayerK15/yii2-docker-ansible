@@ -20,6 +20,7 @@
       - docker-ce
       - docker-ce-cli
       - containerd.io
+      - python3-docker
     state: present
     update_cache: yes
   when: ansible_os_family == 'Debian'
@@ -37,7 +38,7 @@
 
 - name: Add user to docker group
   user:
-    name: "{{ ansible_user_id }}"
+    name: "{{ lookup('env', 'USER') }}"
     groups: docker
     append: yes
 

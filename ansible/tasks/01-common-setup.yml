@@ -12,6 +12,7 @@
       - unzip
       - git
       - python3-pip
+      - python3-yaml  # Install PyYAML via apt
     state: present
     update_cache: yes
   when: ansible_os_family == 'Debian'
@@ -20,14 +21,20 @@
   timezone:
     name: UTC
 
-- name: Install required Python packages
+- name: Check if jsondiff is installed
+  command: dpkg-query -W python3-jsondiff
+  register: jsondiff_check
+  failed_when: false
+  changed_when: false
+
+- name: Install jsondiff with pip if not available via apt
   pip:
-    name:
-      - docker
-      - jsondiff
-      - PyYAML
+    name: jsondiff
     state: present
+    extra_args: --break-system-packages
   become: true
+  when: jsondiff_check.rc != 0
+  ignore_errors: true
 
 - name: Create app directories
   file:
