@@ -2,7 +2,8 @@
 # Main Playbook for Yii2 Application Deployment with Docker Swarm
 
 - name: Provision server for Yii2 Application
-  hosts: all
+  hosts: localhost
+  connection: local
   become: true
   vars_files:
     - vars/main.yml
