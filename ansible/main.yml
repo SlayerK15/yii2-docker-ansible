@@ -1,0 +1,57 @@
+---
+# Main Playbook for Yii2 Application Deployment with Docker Swarm
+
+- name: Provision server for Yii2 Application
+  hosts: all
+  become: true
+  vars_files:
+    - vars/main.yml
+  
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == 'Debian'
+      
+    - name: Create app directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user_id }}"
+        group: "{{ ansible_user_id }}"
+        mode: '0755'
+  
+  tasks:
+    # Basic system setup
+    - name: Include common setup tasks
+      include_tasks: tasks/01-common-setup.yml
+      
+    # Install Docker
+    - name: Include Docker setup tasks
+      include_tasks: tasks/02-docker-setup.yml
+      
+    # Setup Docker Swarm
+    - name: Setup Docker Swarm
+      include_tasks: tasks/03-swarm-setup.yml
+      
+    # Prepare container environment
+    - name: Container setup using prebuilt image
+      include_tasks: tasks/04-container-setup.yml
+      
+    # Configure Nginx for the application
+    - name: Setup Nginx
+      include_tasks: tasks/05-nginx-setup.yml
+      
+    # Deploy the application stack
+    - name: Deploy application stack
+      include_tasks: tasks/06-deployment.yml
+      
+    # Verify the deployment
+    - name: Verify deployment
+      include_tasks: tasks/07-verification.yml
+      
+  post_tasks:
+    - name: Show completion message
+      debug:
+        msg: "Yii2 application has been deployed successfully using Docker Swarm with the prebuilt image!" 

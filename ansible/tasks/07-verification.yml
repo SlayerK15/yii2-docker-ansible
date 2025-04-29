@@ -1,0 +1,40 @@
+---
+# Verification tasks
+
+- name: Wait for web service to become available
+  wait_for:
+    host: localhost
+    port: 80
+    state: started
+    timeout: 60
+  register: web_service_check
+  ignore_errors: true
+
+- name: Check Docker container status
+  shell: docker service ps yii2app_app --no-trunc
+  register: container_status
+  become: true
+  ignore_errors: true
+
+- name: Display container status
+  debug:
+    var: container_status.stdout_lines
+  when: container_status is defined
+
+- name: Check application health
+  uri:
+    url: http://localhost/site/index
+    method: GET
+    status_code: 200
+    timeout: 30
+  register: app_health
+  ignore_errors: true
+  
+- name: Send notification of deployment status
+  debug:
+    msg: "Application deployment status: {{ 'SUCCESS' if app_health is defined and app_health.status == 200 else 'FAILURE - Manual verification required' }}"
+
+- name: Display application URL
+  debug:
+    msg: "Yii2 application is accessible at http://localhost/ or http://{{ ansible_host }}/"
+  when: app_health is defined and app_health.status == 200 

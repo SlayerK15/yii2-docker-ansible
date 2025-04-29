@@ -1,0 +1,55 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "9000:9000"  # Map container port 9000 to host port 9000 (PHP-FPM)
+    volumes:
+      - ../yii2_sample_app:/var/www
+      - ../yii2_sample_app/runtime:/var/www/runtime
+      - ../yii2_sample_app/web/assets:/var/www/web/assets
+    environment:
+      - DB_HOST=db
+      - DB_DATABASE=yii2db
+      - DB_USERNAME=yii2user
+      - DB_PASSWORD=yii2password
+      - YII_ENV=dev
+      - YII_DEBUG=true
+    networks:
+      - yii2-network
+    depends_on:
+      - db
+    healthcheck:
+      test: ["CMD", "php", "-r", "echo 'healthy';"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    restart: always
+    environment:
+      - MYSQL_DATABASE=yii2db
+      - MYSQL_USER=yii2user
+      - MYSQL_PASSWORD=yii2password
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - yii2-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+networks:
+  yii2-network:
+    driver: bridge
+    
+volumes:
+  mysql_data: 

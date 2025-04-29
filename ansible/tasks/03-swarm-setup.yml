@@ -1,0 +1,51 @@
+---
+# Docker Swarm setup tasks
+
+- name: Check if Swarm has already been initialized
+  command: docker info
+  register: docker_info
+  changed_when: false
+  become: true
+
+- name: Initialize Docker Swarm
+  command: "docker swarm init --advertise-addr {{ swarm_manager_ip }}"
+  when: "'Swarm: active' not in docker_info.stdout"
+  become: true
+
+- name: Get Swarm manager token
+  command: docker swarm join-token manager -q
+  register: manager_token
+  changed_when: false
+  become: true
+
+- name: Get Swarm worker token
+  command: docker swarm join-token worker -q
+  register: worker_token
+  changed_when: false
+  become: true
+
+- name: Show tokens for joining other nodes
+  debug:
+    msg: 
+      - "Manager token: {{ manager_token.stdout }}"
+      - "Worker token: {{ worker_token.stdout }}"
+  when: manager_token.stdout is defined and worker_token.stdout is defined
+
+- name: Create Docker registry config for insecure registries if needed
+  copy:
+    content: |
+      {
+        "insecure-registries": ["{{ docker_registry }}"]
+      }
+    dest: /etc/docker/daemon.json
+    mode: '0644'
+  register: registry_config
+  when: docker_registry != "docker.io"
+  become: true
+
+- name: Restart Docker service if registry config changed
+  systemd:
+    name: docker
+    state: restarted
+  when: registry_config is changed
+  become: true 

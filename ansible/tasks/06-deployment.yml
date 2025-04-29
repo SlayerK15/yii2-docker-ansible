@@ -1,0 +1,31 @@
+---
+# Deployment tasks for Docker Swarm
+
+- name: Create Docker Compose file
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_id }}"
+    mode: '0644'
+
+- name: Deploy the application stack to Docker Swarm
+  docker_stack:
+    name: yii2app
+    state: present
+    compose:
+      - "{{ app_dir }}/docker-compose.yml"
+  become: true
+
+- name: Wait for the services to stabilize
+  wait_for:
+    timeout: 30
+
+- name: Get stack services status
+  shell: docker stack services yii2app
+  register: stack_services
+  become: true
+
+- name: Display stack services status
+  debug:
+    var: stack_services.stdout_lines 

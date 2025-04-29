@@ -1,0 +1,44 @@
+---
+# Common setup tasks
+
+- name: Install basic dependencies
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - unzip
+      - git
+      - python3-pip
+    state: present
+    update_cache: yes
+  when: ansible_os_family == 'Debian'
+
+- name: Set up system timezone
+  timezone:
+    name: UTC
+
+- name: Install required Python packages
+  pip:
+    name:
+      - docker
+      - jsondiff
+      - PyYAML
+    state: present
+  become: true
+
+- name: Create app directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: "{{ ansible_user_id }}"
+    group: "{{ ansible_user_id }}"
+  with_items:
+    - "{{ app_dir }}"
+    - "{{ app_dir }}/data/mysql"
+    - "{{ app_dir }}/docker"
+    - "{{ app_dir }}/nginx"
+    - "{{ app_dir }}/logs" 

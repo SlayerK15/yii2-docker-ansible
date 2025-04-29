@@ -1,0 +1,30 @@
+---
+# Variables for Yii2 App Deployment
+
+# Application settings
+app_dir: "/var/www/yii2-app"  # Base directory for the application
+app_env: "dev"                # Application environment (dev, staging, prod)
+app_debug: true               # Enable debug mode
+
+# Database settings
+db_name: "yii2db"
+db_user: "yii2user"
+db_password: "yii2pass"
+db_root_password: "rootpass"
+
+# Docker settings
+docker_compose_version: "1.29.2"
+docker_registry: "docker.io"
+
+# Container settings
+container_name: "yii2-app"
+
+# Nginx settings
+nginx_server_name: "localhost"
+nginx_listen_port: 80
+
+# Docker image settings
+docker_image: "slayerop15/yii2-app:latest"
+
+# Swarm settings
+swarm_manager_ip: "{{ ansible_default_ipv4.address }}" 
