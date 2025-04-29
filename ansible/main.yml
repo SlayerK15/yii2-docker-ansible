@@ -8,6 +8,13 @@
   vars_files:
     - vars/main.yml
   
+  handlers:
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+      become: true
+  
   pre_tasks:
     - name: Update apt cache
       apt:
@@ -31,6 +38,10 @@
     - name: Include Docker setup tasks
       include_tasks: tasks/02-docker-setup.yml
       
+    # Setup local Nginx reverse proxy
+    - name: Setup Nginx
+      include_tasks: tasks/05-nginx-setup.yml
+      
     # Setup Docker Swarm
     - name: Setup Docker Swarm
       include_tasks: tasks/03-swarm-setup.yml
@@ -38,10 +49,6 @@
     # Prepare container environment
     - name: Container setup using prebuilt image
       include_tasks: tasks/04-container-setup.yml
-      
-    # Configure Nginx for the application
-    - name: Setup Nginx
-      include_tasks: tasks/05-nginx-setup.yml
       
     # Deploy the application stack
     - name: Deploy application stack

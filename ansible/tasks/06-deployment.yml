@@ -1,6 +1,18 @@
 ---
 # Deployment tasks for Docker Swarm
 
+- name: Remove the previous stack if it exists
+  command: docker stack rm yii2app
+  register: stack_remove
+  changed_when: "stack_remove.rc == 0"
+  failed_when: false
+  become: true
+
+- name: Wait for stack to be removed
+  wait_for:
+    timeout: 10
+  when: stack_remove.rc == 0
+
 - name: Create Docker Compose file
   template:
     src: docker-compose.yml.j2

@@ -1,0 +1,30 @@
+server {
+    listen 80;
+    server_name {{ nginx_server_name }};
+    
+    root {{ app_dir }}/web;
+    index index.php;
+    
+    # Redirect server error pages to the static page
+    error_page 500 502 503 504 /50x.html;
+    location = /50x.html {
+        root /usr/share/nginx/html;
+    }
+    
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+    
+    # Pass PHP scripts to the Docker container
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+    }
+    
+    # Deny access to . files
+    location ~ /\. {
+        deny all;
+    }
+} 
