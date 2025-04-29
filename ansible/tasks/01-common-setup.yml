@@ -34,8 +34,6 @@
     path: "{{ item }}"
     state: directory
     mode: '0755'
-    owner: "{{ ansible_user }}"
-    group: "{{ ansible_user }}"
   with_items:
     - "{{ app_dir }}"
     - "{{ app_dir }}/data/mysql"
