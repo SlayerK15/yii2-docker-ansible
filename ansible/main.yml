@@ -54,9 +54,52 @@
     - name: Deploy application stack
       include_tasks: tasks/06-deployment.yml
       
+    # Make sure Nginx is restarted after all changes
+    - name: Force Nginx restart
+      service:
+        name: nginx
+        state: restarted
+      become: true
+      
     # Verify the deployment
     - name: Verify deployment
       include_tasks: tasks/07-verification.yml
+      
+    # Deploy Docker stack
+    - name: Deploy Docker stack
+      shell: docker stack deploy -c {{ docker_stack_file }} {{ stack_name }}
+      args:
+        chdir: "{{ app_dir }}"
+
+    # Set proper permissions for web directory
+    - name: Set proper permissions for web directory
+      file:
+        path: "{{ app_dir }}/web"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: 0755
+        recurse: yes
+      
+    # Make sure logs directory exists with proper permissions
+    - name: Make sure logs directory exists with proper permissions
+      file:
+        path: "{{ app_dir }}/runtime/logs"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: 0775
+        recurse: yes
+      
+    # Make sure assets directory is writable
+    - name: Make sure assets directory is writable
+      file:
+        path: "{{ app_dir }}/web/assets"
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: 0775
+        recurse: yes
       
   post_tasks:
     - name: Show completion message

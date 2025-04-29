@@ -18,6 +18,39 @@
     state: present
   become: true
 
+# Extract web files from the container to host for Nginx to serve them
+- name: Create temporary container to extract web files
+  docker_container:
+    name: temp-yii2-extract
+    image: slayerop15/yii2-app:latest
+    command: sleep 10
+    detach: true
+  become: true
+
+- name: Wait for container to start
+  wait_for:
+    timeout: 5
+
+- name: Copy web files from container to host
+  shell: docker cp temp-yii2-extract:/var/www/web {{ app_dir }}/
+  become: true
+
+- name: Remove temporary container
+  docker_container:
+    name: temp-yii2-extract
+    state: absent
+  become: true
+
+- name: Fix permissions for web directory
+  file:
+    path: "{{ app_dir }}/web"
+    state: directory
+    mode: '0755'
+    owner: www-data
+    group: www-data
+    recurse: yes
+  become: true
+
 - name: Create .env file for Docker configuration
   copy:
     content: |
