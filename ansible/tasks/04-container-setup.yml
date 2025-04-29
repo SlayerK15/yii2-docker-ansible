@@ -5,8 +5,8 @@
   file:
     path: "{{ item }}"
     state: directory
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
     mode: '0755'
   with_items:
     - "{{ app_dir }}/runtime"
@@ -32,8 +32,8 @@
       YII_DEBUG=true
     dest: "{{ app_dir }}/.env"
     mode: '0600'
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
 
 # Create a diagnostic PHP info file
 - name: Create phpinfo.php for diagnostics
@@ -44,5 +44,5 @@
       phpinfo();
     dest: "{{ app_dir }}/web/phpinfo.php"
     mode: '0644'
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}" 
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}" 

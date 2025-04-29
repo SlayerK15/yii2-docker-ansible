@@ -5,8 +5,8 @@
   template:
     src: docker-compose.yml.j2
     dest: "{{ app_dir }}/docker-compose.yml"
-    owner: "{{ ansible_user_id }}"
-    group: "{{ ansible_user_id }}"
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
     mode: '0644'
 
 - name: Deploy the application stack to Docker Swarm
