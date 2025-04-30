@@ -66,7 +66,7 @@
       when: "'Swarm: active' not in docker_info.stdout"
 
     # 4. PREPARE APP DIRECTORIES
-    - name: Create project directories with correct permissions
+    - name: Create required directories
       file:
         path: "{{ item }}"
         state: directory
@@ -77,19 +77,8 @@
         - "{{ app_dir }}/data/mysql"
         - "{{ app_dir }}/data/app_runtime"
         - "{{ app_dir }}/data/app_assets"
-        - "{{ app_dir }}/web"
-        - "{{ app_dir }}/web/assets"
 
-    # 5. CREATE SAMPLE INDEX.PHP FOR TESTING
-    - name: Create a test index.php file
-      copy:
-        content: |
-          <?php
-          phpinfo();
-        dest: "{{ app_dir }}/web/index.php"
-        mode: '0644'
-
-    # 6. NGINX SETUP
+    # 5. NGINX SETUP
     - name: Install Nginx
       apt:
         name: nginx
@@ -102,36 +91,22 @@
               listen 80;
               server_name _;
               
-              # Root directory should point to the web directory where your PHP files are
-              root {{ app_dir }}/web;
-              index index.php;
-              
               access_log /var/log/nginx/yii2-access.log;
-              error_log /var/log/nginx/yii2-error.log;
+              error_log /var/log/nginx/yii2-error.log debug;
               
+              # Pass everything to the PHP-FPM container with the correct path
               location / {
-                  try_files $uri $uri/ /index.php$is_args$args;
-              }
-              
-              location ~ \.php$ {
                   include fastcgi_params;
-                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_param SCRIPT_FILENAME /var/www/web/index.php;
                   fastcgi_pass 127.0.0.1:9000;
                   fastcgi_read_timeout 300;
               }
               
-              # Prevent access to Yii system directories
-              location ~ ^/(protected|framework|themes/\w+/views) {
-                  deny all;
-              }
-              
-              # Deny access to hidden files
-              location ~ /\. {
-                  deny all;
-              }
-              
-              # Static files caching
+              # For static assets
               location ~* \.(js|css|png|jpg|jpeg|gif|ico)$ {
+                  # Directly access assets in container
+                  root /var/www/web;
+                  try_files $uri =404;
                   expires max;
                   log_not_found off;
               }
@@ -156,7 +131,7 @@
         state: restarted
         enabled: yes
 
-    # 7. DOCKER STACK FILE
+    # 6. DOCKER STACK FILE
     - name: Create Docker Stack file
       copy:
         content: |
@@ -172,9 +147,8 @@
               ports:
                 - "9000:9000"
               volumes:
-                - {{ app_dir }}/web:/var/www/html/web
-                - {{ app_dir }}/data/app_runtime:/var/www/html/runtime
-                - {{ app_dir }}/data/app_assets:/var/www/html/web/assets
+                - {{ app_dir }}/data/app_runtime:/var/www/runtime
+                - {{ app_dir }}/data/app_assets:/var/www/web/assets
               networks:
                 - yii2-network
               depends_on:
@@ -209,7 +183,7 @@
         dest: "{{ docker_dir }}/docker-stack.yml"
         mode: '0644'
 
-    # 8. PULL AND DEPLOY
+    # 7. PULL AND DEPLOY
     - name: Pull Docker image
       command: "docker pull {{ docker_image }}"
       register: pull_result
@@ -230,7 +204,7 @@
       pause:
         seconds: 15
         
-    # 9. VERIFICATION
+    # 8. VERIFICATION
     - name: Check Docker service status
       command: docker service ls
       register: service_status
@@ -239,29 +213,18 @@
     - name: Display service status
       debug:
         var: service_status.stdout_lines
-      
-    - name: Test connection to PHP-FPM
-      shell: |
-        echo "GET /" | nc 127.0.0.1 9000 || echo "PHP-FPM connection failed"
-      register: php_fpm_test
+
+    - name: Test Yii app response
+      shell: curl -s -I http://localhost | head -1
+      register: app_response
       changed_when: false
+      ignore_errors: yes
       
-    - name: Display PHP-FPM connection result
+    - name: Display Yii app response
       debug:
-        var: php_fpm_test.stdout_lines
-      
-    - name: Check Nginx access
-      command: curl -s http://localhost
-      register: nginx_test
-      changed_when: false
-      ignore_errors: yes
-      
-    - name: Check PHP Info
-      command: curl -s http://localhost/index.php
-      register: php_info
-      changed_when: false
-      ignore_errors: yes
-      
+        var: app_response.stdout_lines
+      when: app_response.rc == 0
+        
     - name: Success message
       debug:
         msg: "Yii2 application has been successfully deployed with Docker Swarm and Nginx!"
