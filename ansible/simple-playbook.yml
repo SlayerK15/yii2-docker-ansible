@@ -24,7 +24,7 @@
           - gnupg-agent
           - software-properties-common
           - git
-          - netcat
+          - netcat-openbsd
         state: present
         update_cache: yes
 
