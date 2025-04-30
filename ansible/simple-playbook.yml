@@ -1,0 +1,283 @@
+---
+# Simple Playbook for Yii2 with Docker, Nginx, and Swarm
+- name: Deploy Yii2 Application
+  hosts: localhost
+  connection: local
+  become: yes
+  vars:
+    app_dir: "/opt/yii2-app"
+    docker_dir: "/opt/yii2-app/docker"
+    docker_image: "slayerop15/yii2-app:latest"
+    db_name: "yii2db"
+    db_user: "yii2user"
+    db_password: "yii2password"
+    db_root_password: "rootpassword"
+
+  tasks:
+    # 1. COMMON SETUP
+    - name: Update and install common packages
+      apt:
+        name: 
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg-agent
+          - software-properties-common
+          - git
+          - netcat
+        state: present
+        update_cache: yes
+
+    # 2. DOCKER SETUP
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker packages
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+          - docker-compose
+        state: present
+        update_cache: yes
+
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user_id }}"
+        groups: docker
+        append: yes
+
+    # 3. DOCKER SWARM SETUP
+    - name: Check if Swarm is initialized
+      command: docker info
+      register: docker_info
+      changed_when: false
+
+    - name: Initialize Docker Swarm
+      command: docker swarm init --advertise-addr=127.0.0.1
+      when: "'Swarm: active' not in docker_info.stdout"
+
+    # 4. NGINX SETUP
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Configure Nginx as reverse proxy
+      copy:
+        content: |
+          server {
+              listen 80;
+              server_name localhost;
+              
+              access_log /var/log/nginx/yii2-access.log;
+              error_log /var/log/nginx/yii2-error.log;
+              
+              location / {
+                  proxy_pass http://127.0.0.1:9000;
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+              }
+          }
+        dest: /etc/nginx/sites-available/yii2-app.conf
+        mode: '0644'
+
+    - name: Enable Nginx site config
+      file:
+        src: /etc/nginx/sites-available/yii2-app.conf
+        dest: /etc/nginx/sites-enabled/yii2-app.conf
+        state: link
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Restart Nginx
+      systemd:
+        name: nginx
+        state: restarted
+        enabled: yes
+
+    # 5. PREPARE DIRECTORIES
+    - name: Create required directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ app_dir }}"
+        - "{{ docker_dir }}"
+        - "{{ app_dir }}/data/mysql"
+        - "{{ app_dir }}/data/app_runtime"
+        - "{{ app_dir }}/data/app_assets"
+
+    # 6. DOCKER CONFIGURATION FILES
+    - name: Create Docker Stack file
+      copy:
+        content: |
+          version: '3.8'
+          
+          services:
+            app:
+              image: {{ docker_image }}
+              deploy:
+                replicas: 1
+                restart_policy:
+                  condition: on-failure
+              ports:
+                - "9000:9000"
+              volumes:
+                - {{ app_dir }}/data/app_runtime:/var/www/html/runtime
+                - {{ app_dir }}/data/app_assets:/var/www/html/web/assets
+              networks:
+                - yii2-network
+              depends_on:
+                - db
+              environment:
+                - DB_HOST=db
+                - DB_DATABASE={{ db_name }}
+                - DB_USERNAME={{ db_user }}
+                - DB_PASSWORD={{ db_password }}
+                - YII_ENV=dev
+                - YII_DEBUG=true
+
+            db:
+              image: mysql:8.0
+              deploy:
+                replicas: 1
+                restart_policy:
+                  condition: on-failure
+              environment:
+                - MYSQL_DATABASE={{ db_name }}
+                - MYSQL_USER={{ db_user }}
+                - MYSQL_PASSWORD={{ db_password }}
+                - MYSQL_ROOT_PASSWORD={{ db_root_password }}
+              volumes:
+                - {{ app_dir }}/data/mysql:/var/lib/mysql
+              networks:
+                - yii2-network
+
+          networks:
+            yii2-network:
+              external: false
+        dest: "{{ docker_dir }}/docker-stack.yml"
+        mode: '0644'
+
+    - name: Create Docker Compose file
+      copy:
+        content: |
+          version: '3.8'
+          
+          services:
+            app:
+              image: {{ docker_image }}
+              ports:
+                - "9000:9000"
+              volumes:
+                - {{ app_dir }}/data/app_runtime:/var/www/html/runtime
+                - {{ app_dir }}/data/app_assets:/var/www/html/web/assets
+              environment:
+                - DB_HOST=db
+                - DB_DATABASE={{ db_name }}
+                - DB_USERNAME={{ db_user }}
+                - DB_PASSWORD={{ db_password }}
+                - YII_ENV=dev
+                - YII_DEBUG=true
+              networks:
+                - yii2-network
+              depends_on:
+                - db
+
+            db:
+              image: mysql:8.0
+              restart: always
+              environment:
+                - MYSQL_DATABASE={{ db_name }}
+                - MYSQL_USER={{ db_user }}
+                - MYSQL_PASSWORD={{ db_password }}
+                - MYSQL_ROOT_PASSWORD={{ db_root_password }}
+              volumes:
+                - {{ app_dir }}/data/mysql:/var/lib/mysql
+              networks:
+                - yii2-network
+
+          networks:
+            yii2-network:
+              driver: bridge
+        dest: "{{ docker_dir }}/docker-compose.yml"
+        mode: '0644'
+
+    # 7. PULL AND DEPLOY
+    - name: Pull Docker image
+      command: "docker pull {{ docker_image }}"
+      register: pull_result
+      changed_when: pull_result.rc == 0
+
+    - name: Create Docker network for Swarm
+      command: "docker network create -d overlay yii2-network"
+      register: network_create
+      changed_when: network_create.rc == 0
+      failed_when: network_create.rc != 0 and "already exists" not in network_create.stderr
+      
+    - name: Deploy with Docker Swarm
+      command: "docker stack deploy -c {{ docker_dir }}/docker-stack.yml yii2-app"
+      register: deploy_result
+      changed_when: deploy_result.rc == 0
+      
+    - name: Wait for services to start
+      pause:
+        seconds: 10
+        
+    # 8. VERIFICATION
+    - name: Check Docker service status
+      command: "docker service ls"
+      register: service_status
+      changed_when: false
+      
+    - name: Display service status
+      debug:
+        var: service_status.stdout_lines
+        
+    - name: Check Docker container is accessible
+      command: "nc -z -v 127.0.0.1 9000"
+      register: connect_result
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Display connection result
+      debug:
+        var: connect_result.stdout_lines
+      when: connect_result.rc == 0
+      
+    - name: Verify Nginx is running
+      command: "curl -s -I http://localhost"
+      register: nginx_result
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Display Nginx status
+      debug:
+        var: nginx_result.stdout_lines
+      when: nginx_result.rc == 0
+      
+    - name: Success message
+      debug:
+        msg: "Yii2 application has been successfully deployed with Docker Swarm and Nginx reverse proxy!" 
