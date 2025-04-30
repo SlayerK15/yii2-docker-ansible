@@ -1,5 +1,5 @@
 ---
-# Simple Playbook for Yii2 with Docker, Nginx, and Swarm
+# Simple Playbook for Yii2 with Docker, Nginx, and Swarm on EC2
 - name: Deploy Yii2 Application
   hosts: localhost
   connection: local
@@ -46,7 +46,6 @@
           - docker-ce-cli
           - containerd.io
           - docker-compose-plugin
-          - docker-compose
         state: present
         update_cache: yes
 
@@ -55,12 +54,6 @@
         name: docker
         state: started
         enabled: yes
-
-    - name: Add user to docker group
-      user:
-        name: "{{ ansible_user_id }}"
-        groups: docker
-        append: yes
 
     # 3. DOCKER SWARM SETUP
     - name: Check if Swarm is initialized
@@ -78,22 +71,48 @@
         name: nginx
         state: present
 
-    - name: Configure Nginx as reverse proxy
+    - name: Configure Nginx for Yii2
       copy:
         content: |
           server {
               listen 80;
-              server_name localhost;
+              server_name _;
+              # Root correctly points to the web directory in your container
+              root /var/www/web;
+              index index.php;
               
               access_log /var/log/nginx/yii2-access.log;
               error_log /var/log/nginx/yii2-error.log;
               
               location / {
-                  proxy_pass http://127.0.0.1:9000;
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto $scheme;
+                  try_files $uri $uri/ /index.php$is_args$args;
+              }
+              
+              # Prevent access to Yii system directories
+              location ~ ^/(protected|framework|themes/\w+/views) {
+                  deny all;
+              }
+              
+              # Pass PHP scripts to PHP-FPM running in Docker container
+              location ~ \.php$ {
+                  fastcgi_pass 127.0.0.1:9000;  # Points to your Docker container
+                  fastcgi_index index.php;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  include fastcgi_params;
+                  fastcgi_param PATH_INFO $fastcgi_path_info;
+                  # Increase timeouts if needed
+                  fastcgi_read_timeout 300;
+              }
+              
+              # Deny access to sensitive files
+              location ~ /\.(ht|svn|git) {
+                  deny all;
+              }
+              
+              # Allow serving static assets
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico)$ {
+                  expires max;
+                  log_not_found off;
               }
           }
         dest: /etc/nginx/sites-available/yii2-app.conf
@@ -129,7 +148,7 @@
         - "{{ app_dir }}/data/app_runtime"
         - "{{ app_dir }}/data/app_assets"
 
-    # 6. DOCKER CONFIGURATION FILES
+    # 6. DOCKER STACK FILE
     - name: Create Docker Stack file
       copy:
         content: |
@@ -156,8 +175,8 @@
                 - DB_DATABASE={{ db_name }}
                 - DB_USERNAME={{ db_user }}
                 - DB_PASSWORD={{ db_password }}
-                - YII_ENV=dev
-                - YII_DEBUG=true
+                - YII_ENV=prod
+                - YII_DEBUG=false
 
             db:
               image: mysql:8.0
@@ -179,50 +198,6 @@
             yii2-network:
               external: false
         dest: "{{ docker_dir }}/docker-stack.yml"
-        mode: '0644'
-
-    - name: Create Docker Compose file
-      copy:
-        content: |
-          version: '3.8'
-          
-          services:
-            app:
-              image: {{ docker_image }}
-              ports:
-                - "9000:9000"
-              volumes:
-                - {{ app_dir }}/data/app_runtime:/var/www/html/runtime
-                - {{ app_dir }}/data/app_assets:/var/www/html/web/assets
-              environment:
-                - DB_HOST=db
-                - DB_DATABASE={{ db_name }}
-                - DB_USERNAME={{ db_user }}
-                - DB_PASSWORD={{ db_password }}
-                - YII_ENV=dev
-                - YII_DEBUG=true
-              networks:
-                - yii2-network
-              depends_on:
-                - db
-
-            db:
-              image: mysql:8.0
-              restart: always
-              environment:
-                - MYSQL_DATABASE={{ db_name }}
-                - MYSQL_USER={{ db_user }}
-                - MYSQL_PASSWORD={{ db_password }}
-                - MYSQL_ROOT_PASSWORD={{ db_root_password }}
-              volumes:
-                - {{ app_dir }}/data/mysql:/var/lib/mysql
-              networks:
-                - yii2-network
-
-          networks:
-            yii2-network:
-              driver: bridge
-        dest: "{{ docker_dir }}/docker-compose.yml"
         mode: '0644'
 
     # 7. PULL AND DEPLOY
@@ -248,7 +223,7 @@
         
     # 8. VERIFICATION
     - name: Check Docker service status
-      command: "docker service ls"
+      command: docker service ls
       register: service_status
       changed_when: false
       
@@ -256,28 +231,6 @@
       debug:
         var: service_status.stdout_lines
         
-    - name: Check Docker container is accessible
-      command: "nc -z -v 127.0.0.1 9000"
-      register: connect_result
-      changed_when: false
-      ignore_errors: yes
-      
-    - name: Display connection result
-      debug:
-        var: connect_result.stdout_lines
-      when: connect_result.rc == 0
-      
-    - name: Verify Nginx is running
-      command: "curl -s -I http://localhost"
-      register: nginx_result
-      changed_when: false
-      ignore_errors: yes
-      
-    - name: Display Nginx status
-      debug:
-        var: nginx_result.stdout_lines
-      when: nginx_result.rc == 0
-      
     - name: Success message
       debug:
-        msg: "Yii2 application has been successfully deployed with Docker Swarm and Nginx reverse proxy!" 
+        msg: "Yii2 application has been successfully deployed with Docker Swarm and Nginx!"

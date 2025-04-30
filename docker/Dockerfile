@@ -1,8 +1,5 @@
 FROM php:8.1-fpm
 
-# Define build arguments
-ARG APP_PATH=yii2_sample_app
-
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     git \
@@ -20,19 +17,25 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/*
 # Install PHP extensions
 RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip intl
 
+# Install Composer
+RUN curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+
 # Set working directory
 WORKDIR /var/www
 
-# Copy application files
-COPY ${APP_PATH}/ /var/www/
+# Create basic Yii2 structure
+RUN mkdir -p /var/www/web /var/www/runtime /var/www/web/assets /var/www/config /var/www/controllers /var/www/views
 
-# Create necessary directories
-RUN mkdir -p /var/www/runtime /var/www/web/assets
+# Create a simple index.php file
+RUN echo '<?php echo "Yii2 Application Container is running!"; ?>' > /var/www/web/index.php
 
-# Set permissions
-RUN chmod -R 775 /var/www/runtime \
+# Set proper permissions
+RUN chown -R www-data:www-data /var/www/runtime \
+    && chown -R www-data:www-data /var/www/web/assets \
+    && chown -R www-data:www-data /var/www/web \
+    && chmod -R 775 /var/www/runtime \
     && chmod -R 775 /var/www/web/assets \
-    && chmod 755 /var/www/yii
+    && chmod -R 775 /var/www/web
 
 # Create health check script
 RUN echo '#!/bin/sh\nphp -r "echo \"healthy\n\";" || exit 1' > /healthcheck.sh \
@@ -45,4 +48,4 @@ EXPOSE 9000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 CMD /healthcheck.sh
 
 # Start PHP-FPM
-CMD ["php-fpm"] 
+CMD ["php-fpm"]

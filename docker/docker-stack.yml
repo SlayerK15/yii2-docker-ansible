@@ -31,6 +31,8 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+    # Run as www-data user for proper permissions
+    user: www-data
 
   db:
     image: mysql:8.0
@@ -59,4 +61,4 @@ networks:
     driver: overlay
 
 volumes:
-  mysql_data: 
+  mysql_data:

@@ -6,7 +6,7 @@ services:
     ports:
       - "9000:9000"  # Map container port 9000 to host port 9000 (PHP-FPM)
     volumes:
-      - ../yii2_sample_app:/var/www
+      # Only mount specific volumes for development, not the entire app
       - ../yii2_sample_app/runtime:/var/www/runtime
       - ../yii2_sample_app/web/assets:/var/www/web/assets
     environment:
@@ -27,6 +27,8 @@ services:
       retries: 3
       start_period: 30s
     restart: unless-stopped
+    # Run as www-data user
+    user: www-data
 
   db:
     image: mysql:8.0
@@ -52,4 +54,4 @@ networks:
     driver: bridge
     
 volumes:
-  mysql_data: 
+  mysql_data:
