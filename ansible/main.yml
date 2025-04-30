@@ -65,11 +65,6 @@
     - name: Verify deployment
       include_tasks: tasks/07-verification.yml
       
-    # Deploy Docker stack
-    - name: Deploy Docker stack
-      shell: docker stack deploy -c {{ docker_stack_file }} {{ stack_name }}
-      args:
-        chdir: "{{ app_dir }}"
 
     # Set proper permissions for web directory
     - name: Set proper permissions for web directory

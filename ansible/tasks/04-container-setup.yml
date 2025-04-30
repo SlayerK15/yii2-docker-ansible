@@ -72,4 +72,41 @@
       // Show PHP information for diagnostics
       phpinfo();
     dest: "{{ app_dir }}/web/phpinfo.php"
-    mode: '0644' 
+    mode: '0644'
+
+# Create additional test files for troubleshooting
+- name: Create test PHP file
+  copy:
+    content: |
+      <?php
+      // Simple test script
+      error_reporting(E_ALL);
+      ini_set('display_errors', 1);
+      echo "PHP Test Script is working!";
+      echo "<pre>";
+      print_r($_SERVER);
+      echo "</pre>";
+    dest: "{{ app_dir }}/web/test.php"
+    mode: '0644'
+    owner: www-data
+    group: www-data
+  become: true
+
+- name: Create simple HTML test file
+  copy:
+    content: |
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>HTML Test Page</title>
+      </head>
+      <body>
+        <h1>HTML Test Page</h1>
+        <p>If you can see this, Nginx is serving static files correctly.</p>
+      </body>
+      </html>
+    dest: "{{ app_dir }}/web/test.html"
+    mode: '0644'
+    owner: www-data
+    group: www-data
+  become: true 

@@ -21,11 +21,20 @@
     var: container_status.stdout_lines
   when: container_status is defined
 
-- name: Check application health
+# Check Yii2 app directly on port 8080
+- name: Check direct access to Yii2 app
   uri:
-    url: http://localhost/site/index
+    url: http://localhost:8080
     method: GET
-    status_code: 200
+    timeout: 30
+  register: direct_access
+  ignore_errors: true
+
+# Check through Nginx
+- name: Check application health through Nginx
+  uri:
+    url: http://localhost/
+    method: GET
     timeout: 30
   register: app_health
   ignore_errors: true
@@ -34,7 +43,12 @@
   debug:
     msg: "Application deployment status: {{ 'SUCCESS' if app_health is defined and app_health.status == 200 else 'FAILURE - Manual verification required' }}"
 
+- name: Display direct app access
+  debug:
+    msg: "Yii2 app is directly accessible at http://localhost:8080"
+  when: direct_access is defined and direct_access.status == 200
+
 - name: Display application URL
   debug:
-    msg: "Yii2 application is accessible at http://localhost/ or http://{{ ansible_host }}/"
+    msg: "Yii2 application is accessible through Nginx at http://localhost/ or http://{{ ansible_host }}/"
   when: app_health is defined and app_health.status == 200 

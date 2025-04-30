@@ -13,8 +13,10 @@ services:
       - DB_DATABASE={{ db_name }}
       - DB_USERNAME={{ db_user }}
       - DB_PASSWORD={{ db_password }}
+    # Run the built-in Yii2 web server instead of PHP-FPM
+    command: php yii serve --port=8080 --docroot=/app/web --listen=0.0.0.0
     ports:
-      - "9000:9000"  # Expose PHP-FPM port for host Nginx
+      - "8080:8080"  # Expose the web server port
     deploy:
       replicas: 1
       restart_policy:

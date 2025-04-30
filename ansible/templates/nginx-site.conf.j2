@@ -2,54 +2,35 @@ server {
     listen 80;
     server_name {{ nginx_server_name }};
     
-    # Set the root directory to the app's public web directory
-    root {{ app_dir }}/web;
-    index index.php index.html;
-    
-    # Basic settings
-    charset utf-8;
-    client_max_body_size 100M;
-    
+    # Enhanced logging for troubleshooting
     access_log /var/log/nginx/access.log;
-    error_log /var/log/nginx/error.log;
+    error_log /var/log/nginx/error.log debug;
     
+    # Simple reverse proxy to Yii2 built-in web server
     location / {
-        # First attempt to serve request as file, then
-        # as directory, then fall back to index.php
-        try_files $uri $uri/ /index.php$is_args$args;
-    }
-    
-    # deny access to special dot files and directories
-    location ~ (^|/)\. {
-        deny all;
-    }
-    
-    # handle PHP files through FastCGI
-    location ~ \.php$ {
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_pass 127.0.0.1:9000;
-        fastcgi_index index.php;
-        fastcgi_read_timeout 300;
-        fastcgi_buffer_size 16k;
-        fastcgi_buffers 4 16k;
-    }
-    
-    # deny access to private directories
-    location ~ /(config|tests|vendor)/.+ {
-        deny all;
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # WebSocket support
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        
+        # Cache and buffer settings
+        proxy_buffering on;
+        proxy_buffer_size 128k;
+        proxy_buffers 4 256k;
+        proxy_busy_buffers_size 256k;
     }
     
     # handling of static assets (images, CSS, etc.)
     location ~* \.(js|css|png|jpg|jpeg|gif|ico|html|woff|woff2|ttf|svg|eot|otf)$ {
+        proxy_pass http://localhost:8080;
         access_log off;
         expires max;
         add_header Cache-Control "public, max-age=31536000";
-    }
-    
-    error_page 404 /404.html;
-    error_page 500 502 503 504 /50x.html;
-    location = /50x.html {
-        root /usr/share/nginx/html;
     }
 } 
