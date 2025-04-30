@@ -65,7 +65,31 @@
       command: docker swarm init --advertise-addr=127.0.0.1
       when: "'Swarm: active' not in docker_info.stdout"
 
-    # 4. NGINX SETUP
+    # 4. PREPARE APP DIRECTORIES
+    - name: Create project directories with correct permissions
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ app_dir }}"
+        - "{{ docker_dir }}"
+        - "{{ app_dir }}/data/mysql"
+        - "{{ app_dir }}/data/app_runtime"
+        - "{{ app_dir }}/data/app_assets"
+        - "{{ app_dir }}/web"
+        - "{{ app_dir }}/web/assets"
+
+    # 5. CREATE SAMPLE INDEX.PHP FOR TESTING
+    - name: Create a test index.php file
+      copy:
+        content: |
+          <?php
+          phpinfo();
+        dest: "{{ app_dir }}/web/index.php"
+        mode: '0644'
+
+    # 6. NGINX SETUP
     - name: Install Nginx
       apt:
         name: nginx
@@ -78,21 +102,38 @@
               listen 80;
               server_name _;
               
+              # Root directory should point to the web directory where your PHP files are
+              root {{ app_dir }}/web;
+              index index.php;
+              
               access_log /var/log/nginx/yii2-access.log;
               error_log /var/log/nginx/yii2-error.log;
               
-              # Simply proxy all requests to the Docker container
               location / {
-                  proxy_pass http://127.0.0.1:9000;
-                  proxy_set_header Host $host;
-                  proxy_set_header X-Real-IP $remote_addr;
-                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-                  proxy_set_header X-Forwarded-Proto $scheme;
-                  
-                  # Increase timeouts if needed
-                  proxy_connect_timeout 300;
-                  proxy_send_timeout 300;
-                  proxy_read_timeout 300;
+                  try_files $uri $uri/ /index.php$is_args$args;
+              }
+              
+              location ~ \.php$ {
+                  include fastcgi_params;
+                  fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                  fastcgi_pass 127.0.0.1:9000;
+                  fastcgi_read_timeout 300;
+              }
+              
+              # Prevent access to Yii system directories
+              location ~ ^/(protected|framework|themes/\w+/views) {
+                  deny all;
+              }
+              
+              # Deny access to hidden files
+              location ~ /\. {
+                  deny all;
+              }
+              
+              # Static files caching
+              location ~* \.(js|css|png|jpg|jpeg|gif|ico)$ {
+                  expires max;
+                  log_not_found off;
               }
           }
         dest: /etc/nginx/sites-available/yii2-app.conf
@@ -115,20 +156,7 @@
         state: restarted
         enabled: yes
 
-    # 5. PREPARE DIRECTORIES
-    - name: Create required directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: '0755'
-      loop:
-        - "{{ app_dir }}"
-        - "{{ docker_dir }}"
-        - "{{ app_dir }}/data/mysql"
-        - "{{ app_dir }}/data/app_runtime"
-        - "{{ app_dir }}/data/app_assets"
-
-    # 6. DOCKER STACK FILE
+    # 7. DOCKER STACK FILE
     - name: Create Docker Stack file
       copy:
         content: |
@@ -144,6 +172,7 @@
               ports:
                 - "9000:9000"
               volumes:
+                - {{ app_dir }}/web:/var/www/html/web
                 - {{ app_dir }}/data/app_runtime:/var/www/html/runtime
                 - {{ app_dir }}/data/app_assets:/var/www/html/web/assets
               networks:
@@ -180,7 +209,7 @@
         dest: "{{ docker_dir }}/docker-stack.yml"
         mode: '0644'
 
-    # 7. PULL AND DEPLOY
+    # 8. PULL AND DEPLOY
     - name: Pull Docker image
       command: "docker pull {{ docker_image }}"
       register: pull_result
@@ -199,9 +228,9 @@
       
     - name: Wait for services to start
       pause:
-        seconds: 10
+        seconds: 15
         
-    # 8. VERIFICATION
+    # 9. VERIFICATION
     - name: Check Docker service status
       command: docker service ls
       register: service_status
@@ -210,7 +239,29 @@
     - name: Display service status
       debug:
         var: service_status.stdout_lines
-        
+      
+    - name: Test connection to PHP-FPM
+      shell: |
+        echo "GET /" | nc 127.0.0.1 9000 || echo "PHP-FPM connection failed"
+      register: php_fpm_test
+      changed_when: false
+      
+    - name: Display PHP-FPM connection result
+      debug:
+        var: php_fpm_test.stdout_lines
+      
+    - name: Check Nginx access
+      command: curl -s http://localhost
+      register: nginx_test
+      changed_when: false
+      ignore_errors: yes
+      
+    - name: Check PHP Info
+      command: curl -s http://localhost/index.php
+      register: php_info
+      changed_when: false
+      ignore_errors: yes
+      
     - name: Success message
       debug:
         msg: "Yii2 application has been successfully deployed with Docker Swarm and Nginx!"
