@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yii2-php
+    restart: unless-stopped
+    volumes:
+      - ./yii2_sample_app:/var/www/yii2_sample_app
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks:
+      - yii2-network
+    environment:
+      - DB_HOST=db
+      - DB_NAME=yii2db
+      - DB_USER=yii2user
+      - DB_PASSWORD=yii2password
+    depends_on:
+      - db
+
+  db:
+    image: mysql:8.0
+    container_name: yii2-db
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_DATABASE: yii2db
+      MYSQL_USER: yii2user
+      MYSQL_PASSWORD: yii2password
+      MYSQL_ROOT_PASSWORD: rootpassword
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - yii2-network
+
+volumes:
+  db_data:
+
+networks:
+  yii2-network:
+    driver: bridge
