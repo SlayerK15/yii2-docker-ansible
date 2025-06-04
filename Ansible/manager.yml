@@ -86,149 +86,17 @@
 
     - name: Create docker-stack.yml
       copy:
-        content: |
-          services:
-            app:
-              image: {{ docker_image }}
-              networks:
-                - yii2-network
-              environment:
-                - DB_HOST=db
-                - DB_NAME=yii2db
-                - DB_USER=yii2user
-                - DB_PASSWORD=yii2password
-                - YII_ENV=prod
-                - YII_DEBUG=false
-              deploy:
-                replicas: 2
-                restart_policy:
-                  condition: on-failure
-                  delay: 10s
-                  max_attempts: 3
-                update_config:
-                  parallelism: 1
-                  delay: 10s
-                  failure_action: rollback
-                resources:
-                  limits:
-                    memory: 512M
-                    cpus: '0.5'
-                  reservations:
-                    memory: 256M
-                    cpus: '0.25'
-              ports:
-                - target: 9000
-                  published: 9000
-                  protocol: tcp
-                  mode: ingress
-              healthcheck:
-                test: ["CMD-SHELL", "pidof php-fpm || exit 1"]
-                interval: 30s
-                timeout: 10s
-                retries: 3
-              depends_on:
-                - db
-
-            db:
-              image: mysql:8.0
-              networks:
-                - yii2-network
-              environment:
-                MYSQL_DATABASE: yii2db
-                MYSQL_USER: yii2user
-                MYSQL_PASSWORD: yii2password
-                MYSQL_ROOT_PASSWORD: rootpassword
-              volumes:
-                - db-data:/var/lib/mysql
-              deploy:
-                replicas: 1
-                restart_policy:
-                  condition: on-failure
-                placement:
-                  constraints:
-                    - node.role == manager
-                resources:
-                  limits:
-                    memory: 1G
-                  reservations:
-                    memory: 512M
-              healthcheck:
-                test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
-                interval: 30s
-                timeout: 10s
-                retries: 5
-
-          networks:
-            yii2-network:
-              driver: overlay
-              attachable: true
-
-          volumes:
-            db-data:
-              driver: local
+        src: ../docker-stack.yml
         dest: "{{ app_dir }}/docker-stack.yml"
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
 
     - name: Configure Nginx
       copy:
-        content: |
-          upstream php_backend {
-              server 127.0.0.1:9000 weight=1 max_fails=3 fail_timeout=30s;
-          }
-
-          server {
-              listen 80 default_server;
-              server_name _;
-
-              add_header X-Frame-Options "SAMEORIGIN" always;
-              add_header X-XSS-Protection "1; mode=block" always;
-              add_header X-Content-Type-Options "nosniff" always;
-
-              access_log /var/log/nginx/yii2-access.log;
-              error_log /var/log/nginx/yii2-error.log;
-
-              client_max_body_size 20M;
-              
-              gzip on;
-              gzip_vary on;
-              gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
-
-              location /health {
-                  access_log off;
-                  return 200 "healthy\n";
-                  add_header Content-Type text/plain;
-              }
-
-              location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|pdf|zip)$ {
-                  include fastcgi_params;
-                  fastcgi_pass php_backend;
-                  fastcgi_param SCRIPT_FILENAME /var/www/html/web/asset-proxy.php;
-                  fastcgi_param DOCUMENT_ROOT /var/www/html/web;
-                  fastcgi_param REQUEST_URI $request_uri;
-                  fastcgi_param ASSET_PATH $request_uri;
-              }
-
-              location / {
-                  include fastcgi_params;
-                  fastcgi_pass php_backend;
-                  fastcgi_index index.php;
-                  fastcgi_param SCRIPT_FILENAME /var/www/html/web/index.php;
-                  fastcgi_param DOCUMENT_ROOT /var/www/html/web;
-                  fastcgi_param REQUEST_URI $request_uri;
-                  fastcgi_param QUERY_STRING $query_string;
-                  
-                  fastcgi_connect_timeout 60s;
-                  fastcgi_send_timeout 60s;
-                  fastcgi_read_timeout 60s;
-              }
-
-              location ~ /\.(ht|svn|git) {
-                  deny all;
-                  return 404;
-              }
-          }
+        src: ../nginx-conf/yii2-production.conf
         dest: /etc/nginx/conf.d/yii2-app.conf
+        backup: yes
+      notify: restart nginx
 
     - name: Remove default nginx site
       file:
@@ -278,3 +146,9 @@
           
           🔧 Services:
           {{ service_status.stdout }}
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted
