@@ -38,8 +38,9 @@ COPY yii2_sample_app/ .
 # Create www-data user with consistent UID
 RUN usermod -u 1000 www-data && groupmod -g 1000 www-data
 
-# Install PHP dependencies
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# Install PHP dependencies INCLUDING dev dependencies
+# CHANGED: Removed --no-dev flag to include yii2-debug, yii2-gii, etc.
+RUN composer install --optimize-autoloader --no-interaction
 
 # Create runtime directories and set permissions
 RUN mkdir -p runtime web/assets \
@@ -52,5 +53,5 @@ USER www-data
 # Expose port 9000
 EXPOSE 9000
 
-# Start PHP-FPM directly (no entrypoint needed for production)
+# Start PHP-FPM directly
 CMD ["php-fpm"]
