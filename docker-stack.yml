@@ -1,6 +1,6 @@
 services:
   app:
-    image: slayerop15/yii2-app:latest
+    image: slayerop15/yii2-docker-ansible
     networks:
       - yii2-network
     environment:
