@@ -1,0 +1,277 @@
+---
+- name: Setup Docker Swarm Manager
+  hosts: manager
+  become: yes
+  vars:
+    docker_image: "slayerop15/yii2-docker-ansible:latest"
+    app_dir: "/opt/yii2-app"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - software-properties-common
+          - nginx
+          - git
+        state: present
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+
+    - name: Start and enable Docker
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Add user to docker group
+      user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Check if Swarm is initialized
+      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      register: swarm_status
+      changed_when: false
+
+    - name: Initialize Docker Swarm
+      shell: docker swarm init --advertise-addr {{ ansible_default_ipv4.address }}
+      when: swarm_status.stdout != "active"
+
+    - name: Get worker join token
+      shell: docker swarm join-token worker -q
+      register: worker_token
+      changed_when: false
+
+    - name: Display worker join command
+      debug:
+        msg: "Workers can join with: docker swarm join --token {{ worker_token.stdout }} {{ ansible_default_ipv4.address }}:2377"
+
+    - name: Create app directory
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Create docker-stack.yml
+      copy:
+        content: |
+          services:
+            app:
+              image: {{ docker_image }}
+              networks:
+                - yii2-network
+              environment:
+                - DB_HOST=db
+                - DB_NAME=yii2db
+                - DB_USER=yii2user
+                - DB_PASSWORD=yii2password
+                - YII_ENV=prod
+                - YII_DEBUG=false
+              deploy:
+                replicas: 2
+                restart_policy:
+                  condition: on-failure
+                  delay: 10s
+                  max_attempts: 3
+                update_config:
+                  parallelism: 1
+                  delay: 10s
+                  failure_action: rollback
+                resources:
+                  limits:
+                    memory: 512M
+                    cpus: '0.5'
+                  reservations:
+                    memory: 256M
+                    cpus: '0.25'
+              ports:
+                - target: 9000
+                  published: 9000
+                  protocol: tcp
+                  mode: ingress
+              healthcheck:
+                test: ["CMD-SHELL", "pidof php-fpm || exit 1"]
+                interval: 30s
+                timeout: 10s
+                retries: 3
+              depends_on:
+                - db
+
+            db:
+              image: mysql:8.0
+              networks:
+                - yii2-network
+              environment:
+                MYSQL_DATABASE: yii2db
+                MYSQL_USER: yii2user
+                MYSQL_PASSWORD: yii2password
+                MYSQL_ROOT_PASSWORD: rootpassword
+              volumes:
+                - db-data:/var/lib/mysql
+              deploy:
+                replicas: 1
+                restart_policy:
+                  condition: on-failure
+                placement:
+                  constraints:
+                    - node.role == manager
+                resources:
+                  limits:
+                    memory: 1G
+                  reservations:
+                    memory: 512M
+              healthcheck:
+                test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+                interval: 30s
+                timeout: 10s
+                retries: 5
+
+          networks:
+            yii2-network:
+              driver: overlay
+              attachable: true
+
+          volumes:
+            db-data:
+              driver: local
+        dest: "{{ app_dir }}/docker-stack.yml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Configure Nginx
+      copy:
+        content: |
+          upstream php_backend {
+              server 127.0.0.1:9000 weight=1 max_fails=3 fail_timeout=30s;
+          }
+
+          server {
+              listen 80 default_server;
+              server_name _;
+
+              add_header X-Frame-Options "SAMEORIGIN" always;
+              add_header X-XSS-Protection "1; mode=block" always;
+              add_header X-Content-Type-Options "nosniff" always;
+
+              access_log /var/log/nginx/yii2-access.log;
+              error_log /var/log/nginx/yii2-error.log;
+
+              client_max_body_size 20M;
+              
+              gzip on;
+              gzip_vary on;
+              gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
+
+              location /health {
+                  access_log off;
+                  return 200 "healthy\n";
+                  add_header Content-Type text/plain;
+              }
+
+              location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|pdf|zip)$ {
+                  include fastcgi_params;
+                  fastcgi_pass php_backend;
+                  fastcgi_param SCRIPT_FILENAME /var/www/html/web/asset-proxy.php;
+                  fastcgi_param DOCUMENT_ROOT /var/www/html/web;
+                  fastcgi_param REQUEST_URI $request_uri;
+                  fastcgi_param ASSET_PATH $request_uri;
+              }
+
+              location / {
+                  include fastcgi_params;
+                  fastcgi_pass php_backend;
+                  fastcgi_index index.php;
+                  fastcgi_param SCRIPT_FILENAME /var/www/html/web/index.php;
+                  fastcgi_param DOCUMENT_ROOT /var/www/html/web;
+                  fastcgi_param REQUEST_URI $request_uri;
+                  fastcgi_param QUERY_STRING $query_string;
+                  
+                  fastcgi_connect_timeout 60s;
+                  fastcgi_send_timeout 60s;
+                  fastcgi_read_timeout 60s;
+              }
+
+              location ~ /\.(ht|svn|git) {
+                  deny all;
+                  return 404;
+              }
+          }
+        dest: /etc/nginx/conf.d/yii2-app.conf
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+
+    - name: Test nginx configuration
+      command: nginx -t
+
+    - name: Start and enable nginx
+      systemd:
+        name: nginx
+        enabled: yes
+        state: restarted
+
+    - name: Pull Docker image
+      docker_image:
+        name: "{{ docker_image }}"
+        source: pull
+        force_source: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Deploy application stack
+      shell: |
+        cd {{ app_dir }}
+        docker stack deploy --compose-file docker-stack.yml yii2-app
+      become_user: "{{ ansible_user }}"
+
+    - name: Wait for services to be ready
+      shell: docker service ls --filter name=yii2-app --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
+      register: service_status
+      until: service_status.stdout | regex_search('yii2-app_app.*2/2') and service_status.stdout | regex_search('yii2-app_db.*1/1')
+      retries: 12
+      delay: 10
+      become_user: "{{ ansible_user }}"
+
+    - name: Show deployment info
+      debug:
+        msg: |
+          ✅ Manager deployed successfully!
+          
+          🌐 Application: http://{{ ansible_default_ipv4.address }}
+          💚 Health: http://{{ ansible_default_ipv4.address }}/health
+          
+          📋 Worker join command:
+          docker swarm join --token {{ worker_token.stdout }} {{ ansible_default_ipv4.address }}:2377
+          
+          🔧 Services:
+          {{ service_status.stdout }}

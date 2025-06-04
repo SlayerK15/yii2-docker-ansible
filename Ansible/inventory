@@ -1,0 +1,11 @@
+# Updated inventory for split playbooks
+[manager]
+yii2-manager ansible_host=13.233.159.47 ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
+
+[workers]
+yii2-worker1 ansible_host=65.1.107.234 ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
+yii2-worker2 ansible_host=13.233.153.184 ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
+
+[all:vars]
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_python_interpreter=/usr/bin/python3
