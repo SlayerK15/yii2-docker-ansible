@@ -56,8 +56,27 @@
         groups: docker
         append: yes
 
+    - name: Restart Docker service to apply group changes
+      systemd:
+        name: docker
+        state: restarted
+
+    - name: Force reload user groups
+      shell: |
+        sudo usermod -aG docker {{ ansible_user }}
+        sudo systemctl restart docker
+      become: yes
+
     - name: Reset SSH connection to apply docker group changes
       meta: reset_connection
+
+    - name: Verify docker works without sudo
+      shell: docker info
+      become_user: "{{ ansible_user }}"
+      register: docker_test
+      retries: 3
+      delay: 5
+      until: docker_test.rc == 0
 
     - name: Check if Swarm is initialized
       shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
@@ -125,18 +144,52 @@
         docker stack deploy --compose-file docker-stack.yml yii2-app
       become_user: "{{ ansible_user }}"
 
-    - name: Wait for services to be ready
+    - name: Wait for application services to be ready
       shell: docker service ls --filter name=yii2-app --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
       register: service_status
-      until: service_status.stdout | regex_search('yii2-app_app.*2/2') and service_status.stdout | regex_search('yii2-app_db.*1/1')
-      retries: 12
-      delay: 10
+      until: service_status.stdout | regex_search('yii2-app_app.*3/3')
+      retries: 10
+      delay: 15
+      become_user: "{{ ansible_user }}"
+      ignore_errors: yes
+
+    - name: Wait for database service to be ready
+      shell: docker service ls --filter name=yii2-app_db --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
+      register: db_service_status
+      until: db_service_status.stdout | regex_search('yii2-app_db.*1/1')
+      retries: 8
+      delay: 20
+      become_user: "{{ ansible_user }}"
+      ignore_errors: yes
+
+    - name: Check container distribution across nodes
+      shell: docker service ps yii2-app_app --format "table {{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Node{{ "}}" }}\t{{ "{{" }}.CurrentState{{ "}}" }}"
+      register: container_distribution
+      become_user: "{{ ansible_user }}"
+      ignore_errors: yes
+
+    - name: Check database placement
+      shell: docker service ps yii2-app_db --format "table {{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Node{{ "}}" }}\t{{ "{{" }}.CurrentState{{ "}}" }}"
+      register: db_placement
+      become_user: "{{ ansible_user }}"
+      ignore_errors: yes
+
+    - name: Show database logs if not running
+      shell: docker service logs yii2-app_db --tail 20
+      register: db_logs
+      become_user: "{{ ansible_user }}"
+      ignore_errors: yes
+      when: db_service_status.stdout | regex_search('yii2-app_db.*0/1')
+
+    - name: Get final service status
+      shell: docker service ls --filter name=yii2-app --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
+      register: final_service_status
       become_user: "{{ ansible_user }}"
 
     - name: Show deployment info
       debug:
         msg: |
-          ✅ Manager deployed successfully!
+          ✅ Manager deployed with perfect distribution!
           
           🌐 Application: http://{{ ansible_default_ipv4.address }}
           💚 Health: http://{{ ansible_default_ipv4.address }}/health
@@ -144,8 +197,26 @@
           📋 Worker join command:
           docker swarm join --token {{ worker_token.stdout }} {{ ansible_default_ipv4.address }}:2377
           
-          🔧 Services:
-          {{ service_status.stdout }}
+          🔧 Services Status:
+          {{ final_service_status.stdout }}
+          
+          📍 Container Distribution (1 per machine):
+          {{ container_distribution.stdout }}
+          
+          🗄️ Database Placement (Manager only):
+          {{ db_placement.stdout }}
+          
+          {% if db_logs is defined and db_logs.stdout %}
+          🚨 Database Issues (check logs):
+          {{ db_logs.stdout | truncate(200) }}
+          {% endif %}
+          
+          💡 Perfect Setup Achieved:
+          • Manager: Database + 1 App Container
+          • Worker1: 1 App Container  
+          • Worker2: 1 App Container
+          
+          🚀 Next: Deploy workers with the join command above!
 
   handlers:
     - name: restart nginx

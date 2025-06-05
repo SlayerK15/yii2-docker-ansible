@@ -4,37 +4,26 @@ services:
     networks:
       - yii2-network
     environment:
-      # Database configuration
       - DB_HOST=db
       - DB_NAME=yii2db
       - DB_USER=yii2user
       - DB_PASSWORD=yii2password
-      
-      # CRITICAL: Production environment variables to prevent debug module errors
       - YII_ENV=prod
       - YII_DEBUG=false
-      
-      # Optional: Additional production settings
-      - PHP_MEMORY_LIMIT=512M
-      - PHP_MAX_EXECUTION_TIME=60
     deploy:
-      replicas: 2
+      replicas: 3  # Exactly 3 containers: 1 per node
       restart_policy:
         condition: on-failure
         delay: 10s
         max_attempts: 3
-        window: 120s
       update_config:
         parallelism: 1
         delay: 10s
         failure_action: rollback
-        monitor: 60s
-        order: stop-first
-      rollback_config:
-        parallelism: 1
-        delay: 10s
-        monitor: 60s
-        order: stop-first
+      placement:
+        max_replicas_per_node: 1  # Force exactly 1 container per node
+        preferences:
+          - spread: node.hostname  # Spread across all nodes by hostname
       resources:
         limits:
           memory: 512M
@@ -67,17 +56,18 @@ services:
       MYSQL_ROOT_PASSWORD: rootpassword
       MYSQL_CHARSET: utf8mb4
       MYSQL_COLLATION: utf8mb4_unicode_ci
+      MYSQL_AUTHENTICATION_PLUGIN: mysql_native_password
     volumes:
       - db-data:/var/lib/mysql
     deploy:
       replicas: 1
       restart_policy:
         condition: on-failure
-        delay: 10s
-        max_attempts: 3
+        delay: 15s
+        max_attempts: 5
       placement:
         constraints:
-          - node.role == manager
+          - node.role == manager  # Database ONLY on manager
       resources:
         limits:
           memory: 1G
@@ -85,25 +75,23 @@ services:
         reservations:
           memory: 512M
           cpus: '0.5'
-    ports:
-      - target: 3306
-        published: 3306
-        protocol: tcp
-        mode: ingress
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
       interval: 30s
       timeout: 10s
-      retries: 5
+      retries: 10
       start_period: 60s
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --innodb-buffer-pool-size=256M
+      --max-connections=100
 
 networks:
   yii2-network:
     driver: overlay
     attachable: true
-    ipam:
-      config:
-        - subnet: 10.0.1.0/24
 
 volumes:
   db-data:
