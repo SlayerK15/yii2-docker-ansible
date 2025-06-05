@@ -35,4 +35,4 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script: docker service update --image ${{ env.IMAGE_NAME }}:latest yii2-stack_app
+          script: docker service update --image ${{ env.IMAGE_NAME }}:latest yii2-app
