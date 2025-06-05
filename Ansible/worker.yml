@@ -1,135 +1,265 @@
 ---
-- name: Setup Docker Swarm Worker with Nginx
-  hosts: yii2-workers
+- name: Setup Docker Swarm Worker Node for Yii2 Application
+  hosts: workers
   become: yes
   vars:
-    nginx_config_source: ../nginx-conf/yii2-production.conf
+    docker_compose_version: "{{ docker_compose_version | default('2.24.5') }}"
+    repo_url: "https://github.com/SlayerK15/yii2-docker-ansible.git"
+    app_directory: "/opt/yii2-docker-ansible"
+    # These variables should be provided when running the playbook
+    swarm_manager_ip: "{{ swarm_manager_ip | default('') }}"
+    worker_join_token: "{{ worker_join_token | default('') }}"
 
   tasks:
-    - name: Fail if manager_ip or worker_token not provided
-      fail:
-        msg: "manager_ip and worker_token must be provided as extra vars"
-      when: manager_ip is not defined or worker_token is not defined
-
-    - name: Update apt cache
+    # Step 1: System Update and Dependencies
+    - name: Update system packages
       apt:
         update_cache: yes
+        upgrade: yes
         cache_valid_time: 3600
 
-    - name: Install required packages
+    - name: Install required system packages
       apt:
         name:
           - apt-transport-https
           - ca-certificates
           - curl
+          - software-properties-common
           - gnupg
           - lsb-release
-          - nginx
           - git
         state: present
 
+    # Step 2: Install Docker
     - name: Add Docker GPG key
       apt_key:
         url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /usr/share/keyrings/docker-archive-keyring.gpg
         state: present
 
     - name: Add Docker repository
       apt_repository:
-        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
         state: present
+        filename: docker
 
-    - name: Install Docker
+    - name: Install Docker packages
       apt:
         name:
           - docker-ce
           - docker-ce-cli
           - containerd.io
         state: present
+        update_cache: yes
 
-    - name: Start and enable Docker
+    - name: Enable and start Docker service
       systemd:
         name: docker
         enabled: yes
         state: started
 
-    - name: Add user to docker group
+    - name: Add ubuntu user to docker group
       user:
-        name: "{{ ansible_user }}"
+        name: ubuntu
         groups: docker
         append: yes
 
-    # Force SSH reconnection for group changes
-    - name: Reset SSH connection to apply docker group changes
+    - name: Reset SSH connection to refresh docker group membership
       meta: reset_connection
 
-    - name: Wait for connection reset
-      wait_for_connection:
-        delay: 5
-        timeout: 30
+    # Step 3: Install Docker Compose
+    - name: Get latest Docker Compose version
+      uri:
+        url: https://api.github.com/repos/docker/compose/releases/latest
+        return_content: yes
+      register: compose_release
+      
+    - name: Set Docker Compose version
+      set_fact:
+        compose_version: "{{ compose_release.json.tag_name | regex_replace('^v', '') }}"
 
-    # Docker Swarm Join
-    - name: Check if already in swarm
-      command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
-      register: swarm_state
-      become: no
-      changed_when: false
+    - name: Download Docker Compose
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/v{{ compose_version }}/docker-compose-{{ ansible_system }}-{{ ansible_architecture }}"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+        owner: root
+        group: root
 
-    - name: Join Docker Swarm
-      command: docker swarm join --token {{ worker_token }} {{ manager_ip }}:2377
-      become: no
-      when: swarm_state.stdout != "active"
-
-    - name: Verify swarm membership
-      command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
-      register: swarm_verification
-      become: no
-      changed_when: false
-
-    # Nginx Configuration for Worker
-    - name: Configure Nginx for worker node
-      copy:
-        src: "{{ nginx_config_source }}"
-        dest: /etc/nginx/conf.d/yii2-production.conf
-        backup: yes
-      notify: restart nginx
-
-    - name: Remove default nginx site
+    - name: Create symlink for docker-compose
       file:
-        path: /etc/nginx/sites-enabled/default
-        state: absent
-      notify: restart nginx
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
 
-    - name: Test nginx configuration
-      command: nginx -t
-      changed_when: false
+    # Step 4: Install and Configure Nginx
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
 
-    - name: Start and enable nginx
+    - name: Enable and start Nginx service
       systemd:
         name: nginx
         enabled: yes
         state: started
 
-    # Pull Docker image to ensure availability
-    - name: Pull application image
-      command: docker pull slayerop15/yii2-docker-ansible:latest
-      become: no
-      retries: 3
-      delay: 10
+    # Step 5: Git Clone Repository
+    - name: Remove existing app directory if it exists
+      file:
+        path: "{{ app_directory }}"
+        state: absent
 
-    - name: Show worker status
+    - name: Clone the Yii2 application repository
+      git:
+        repo: "{{ repo_url }}"
+        dest: "{{ app_directory }}"
+        version: main
+        force: yes
+
+    - name: Set ownership of cloned repository
+      file:
+        path: "{{ app_directory }}"
+        owner: ubuntu
+        group: ubuntu
+        recurse: yes
+
+    # Step 6: Configure Nginx
+    - name: Remove sites-enabled directory
+      file:
+        path: /etc/nginx/sites-enabled
+        state: absent
+
+    - name: Remove sites-available directory
+      file:
+        path: /etc/nginx/sites-available
+        state: absent
+
+    - name: Copy Nginx production configuration
+      copy:
+        src: "{{ app_directory }}/nginx-conf/yii2-production.conf"
+        dest: /etc/nginx/conf.d/default.conf
+        owner: root
+        group: root
+        mode: '0644'
+        remote_src: yes
+
+    - name: Test Nginx configuration
+      command: nginx -t
+      register: nginx_test
+
+    - name: Reload Nginx if configuration is valid
+      systemd:
+        name: nginx
+        state: reloaded
+      when: nginx_test.rc == 0
+
+    # Step 7: Join Docker Swarm (Worker)
+    - name: Validate required variables for swarm join
+      assert:
+        that:
+          - swarm_manager_ip != ""
+          - worker_join_token != ""
+        fail_msg: "Both swarm_manager_ip and worker_join_token must be provided"
+
+    - name: Verify docker group membership
+      command: groups
+      become_user: ubuntu
+      register: user_groups
+      changed_when: false
+
+    - name: Display user groups for verification
       debug:
-        msg: |
-          ✅ Worker setup complete!
-          
-          📍 Node: {{ ansible_hostname }}
-          🔗 Swarm Status: {{ swarm_verification.stdout }}
-          🎯 Manager: {{ manager_ip }}
-          🌐 Access URL: http://{{ ansible_default_ipv4.address }}
-          
-          ✨ Successfully joined swarm with nginx configured!
+        msg: "User ubuntu groups: {{ user_groups.stdout }}"
+
+    - name: Test docker access without sudo
+      command: docker info
+      become_user: ubuntu
+      register: docker_test
+      failed_when: false
+      changed_when: false
+
+    - name: Handle docker permission issues if they exist
+      block:
+        - name: Force refresh docker group membership
+          shell: |
+            sudo usermod -aG docker ubuntu
+            sudo systemctl restart docker
+          when: docker_test.rc != 0
+
+        - name: Wait for docker service to be ready
+          pause:
+            seconds: 10
+          when: docker_test.rc != 0
+
+        - name: Reset connection again if needed
+          meta: reset_connection
+          when: docker_test.rc != 0
+
+    - name: Check if node is already part of Docker Swarm
+      command: docker info --format '{{.Swarm.LocalNodeState}}'
+      become_user: ubuntu
+      register: swarm_status
+      failed_when: false
+      changed_when: false
+
+    - name: Leave existing swarm if necessary
+      command: docker swarm leave --force
+      become_user: ubuntu
+      when: swarm_status.stdout == "active"
+      ignore_errors: yes
+
+    - name: Join Docker Swarm as worker
+      command: docker swarm join --token {{ worker_join_token }} {{ swarm_manager_ip }}:2377
+      become_user: ubuntu
+      register: swarm_join_result
+      when: swarm_status.stdout != "active"
+
+    - name: Verify swarm membership
+      command: docker info --format '{{.Swarm.LocalNodeState}}'
+      become_user: ubuntu
+      register: final_swarm_status
+      changed_when: false
+
+    - name: Get node information
+      command: docker node ls
+      become_user: ubuntu
+      register: node_info
+      failed_when: false
+      changed_when: false
+
+    # Step 8: Verification
+    - name: Verify Docker installation
+      command: docker --version
+      register: docker_version
+
+    - name: Verify Docker Compose installation
+      command: docker-compose --version
+      register: docker_compose_version
+
+    - name: Verify Nginx installation
+      command: nginx -v
+      register: nginx_version
+
+    - name: Display installation summary
+      debug:
+        msg:
+          - "✅ Installation completed successfully!"
+          - "{{ docker_version.stdout }}"
+          - "{{ docker_compose_version.stdout }}"
+          - "{{ nginx_version.stderr }}"
+          - "🐝 Docker Swarm Worker joined manager at {{ swarm_manager_ip }}"
+          - "📁 Application cloned to {{ app_directory }}"
+          - "🌐 Nginx configured with production settings"
+          - "🔗 Swarm Status: {{ final_swarm_status.stdout }}"
 
   handlers:
     - name: restart nginx
       systemd:
         name: nginx
+        state: restarted
+
+    - name: restart docker
+      systemd:
+        name: docker
         state: restarted

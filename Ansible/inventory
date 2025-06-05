@@ -1,11 +1,18 @@
 # Updated inventory for split playbooks
 [manager]
-yii2-manager ansible_host=<ip_placeholde> ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
+yii2-manager ansible_host=<manager_ip_placeholder> ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
 
 [workers]
-yii2-worker1 ansible_host=<ip_placeholde> ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
-yii2-worker2 ansible_host=<ip_placeholde> ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
+yii2-worker1 ansible_host=<worker1_ip_placeholder> ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
+yii2-worker2 ansible_host=<worker2_ip_placeholder> ansible_user=ubuntu ansible_ssh_private_key_file=./key.pem
 
 [all:vars]
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=30'
 ansible_python_interpreter=/usr/bin/python3
+ansible_host_key_checking=false
+ansible_ssh_retries=3
+
+# Optional: Environment-specific variables
+# docker_compose_version=2.24.5
+# app_directory=/opt/yii2-docker-ansible
+# repo_url=https://github.com/SlayerK15/yii2-docker-ansible.git

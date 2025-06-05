@@ -21,9 +21,9 @@ services:
         delay: 10s
         failure_action: rollback
       placement:
-        max_replicas_per_node: 1  # Force exactly 1 container per node
+        max_replicas_per_node: 1  
         preferences:
-          - spread: node.hostname  # Spread across all nodes by hostname
+          - spread: node.hostname  
       resources:
         limits:
           memory: 512M
@@ -36,14 +36,7 @@ services:
         published: 9000
         protocol: tcp
         mode: ingress
-    healthcheck:
-      test: ["CMD-SHELL", "pidof php-fpm || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    depends_on:
-      - db
+    
 
   db:
     image: mysql:8.0
@@ -67,7 +60,7 @@ services:
         max_attempts: 5
       placement:
         constraints:
-          - node.role == manager  # Database ONLY on manager
+          - node.role == manager  
       resources:
         limits:
           memory: 1G
@@ -75,12 +68,7 @@ services:
         reservations:
           memory: 512M
           cpus: '0.5'
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-      start_period: 60s
+    
     command: >
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
