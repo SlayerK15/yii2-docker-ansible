@@ -168,10 +168,6 @@
       register: user_groups
       changed_when: false
 
-    - name: Display user groups for verification
-      debug:
-        msg: "User ubuntu groups: {{ user_groups.stdout }}"
-
     - name: Test docker access without sudo
       command: docker info
       become_user: ubuntu
@@ -185,19 +181,17 @@
           shell: |
             sudo usermod -aG docker ubuntu
             sudo systemctl restart docker
-          when: docker_test.rc != 0
 
         - name: Wait for docker service to be ready
           pause:
             seconds: 10
-          when: docker_test.rc != 0
 
-        - name: Reset connection again if needed
+        - name: Reset connection to pick up new group membership
           meta: reset_connection
-          when: docker_test.rc != 0
+      when: docker_test.rc != 0
 
     - name: Check if node is already part of Docker Swarm
-      command: docker info --format '{{.Swarm.LocalNodeState}}'
+      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
       become_user: ubuntu
       register: swarm_status
       failed_when: false
@@ -206,24 +200,24 @@
     - name: Leave existing swarm if necessary
       command: docker swarm leave --force
       become_user: ubuntu
-      when: swarm_status.stdout == "active"
+      when: swarm_status.stdout != "inactive"
       ignore_errors: yes
 
     - name: Join Docker Swarm as worker
       command: docker swarm join --token {{ worker_join_token }} {{ swarm_manager_ip }}:2377
       become_user: ubuntu
       register: swarm_join_result
-      when: swarm_status.stdout != "active"
 
     - name: Verify swarm membership
-      command: docker info --format '{{.Swarm.LocalNodeState}}'
+      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
       become_user: ubuntu
       register: final_swarm_status
       changed_when: false
 
-    - name: Get node information
+    - name: Get node information from manager
       command: docker node ls
       become_user: ubuntu
+      delegate_to: "{{ groups['manager'][0] }}"
       register: node_info
       failed_when: false
       changed_when: false

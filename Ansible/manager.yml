@@ -152,42 +152,8 @@
       when: nginx_test.rc == 0
 
     # Step 7: Initialize Docker Swarm (Manager)
-    - name: Verify docker group membership
-      command: groups
-      become_user: ubuntu
-      register: user_groups
-      changed_when: false
-
-    - name: Display user groups for verification
-      debug:
-        msg: "User ubuntu groups: {{ user_groups.stdout }}"
-
-    - name: Test docker access without sudo
-      command: docker info
-      become_user: ubuntu
-      register: docker_test
-      failed_when: false
-      changed_when: false
-
-    - name: Handle docker permission issues if they exist
-      block:
-        - name: Force refresh docker group membership
-          shell: |
-            sudo usermod -aG docker ubuntu
-            sudo systemctl restart docker
-          when: docker_test.rc != 0
-
-        - name: Wait for docker service to be ready
-          pause:
-            seconds: 10
-          when: docker_test.rc != 0
-
-        - name: Reset connection again if needed
-          meta: reset_connection
-          when: docker_test.rc != 0
-
     - name: Check if Docker Swarm is already initialized
-      command: docker info --format '{{.Swarm.LocalNodeState}}'
+      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
       become_user: ubuntu
       register: swarm_status
       failed_when: false
@@ -258,66 +224,28 @@
           - "📋 Join tokens saved to {{ app_directory }}/swarm-join-commands.txt"
 
     # Step 9: Deploy Docker Stack
-    - name: Wait for Docker Swarm to be fully ready
-      pause:
-        seconds: 10
-
-    - name: Check if docker-stack.yml exists
-      stat:
-        path: "{{ app_directory }}/docker-stack.yml"
-      register: stack_file
-
-    - name: Copy docker-stack.yml to deployment location
-      copy:
-        src: "{{ app_directory }}/docker-stack.yml"
-        dest: /opt/docker-stack.yml
-        owner: ubuntu
-        group: ubuntu
-        mode: '0644'
-        remote_src: yes
-      when: stack_file.stat.exists
-
     - name: Deploy Yii2 application stack
-      command: docker stack deploy -c /opt/docker-stack.yml yii2-app
+      command: docker stack deploy -c {{ app_directory }}/docker-stack.yml yii2-app
       become_user: ubuntu
       register: stack_deploy
-      when: stack_file.stat.exists
-
-    - name: Wait for services to start
-      pause:
-        seconds: 30
-      when: stack_file.stat.exists
 
     - name: Check stack deployment status
       command: docker stack ls
       become_user: ubuntu
       register: stack_status
-      when: stack_file.stat.exists
 
     - name: Check service status
       command: docker service ls
       become_user: ubuntu
       register: service_status
-      when: stack_file.stat.exists
-
-    - name: Display stack deployment results
-      debug:
-        msg:
-          - "🚀 Docker Stack Deployment Results:"
-          - "{{ stack_deploy.stdout if stack_file.stat.exists else 'docker-stack.yml not found' }}"
-          - "📊 Stack Status:"
-          - "{{ stack_status.stdout if stack_file.stat.exists else 'N/A' }}"
-          - "🔧 Service Status:"
-          - "{{ service_status.stdout if stack_file.stat.exists else 'N/A' }}"
 
     - name: Display final summary
       debug:
         msg:
-          - "🎉 Complete setup finished!"
-          - "🌐 Application should be accessible at: http://{{ ansible_default_ipv4.address }}"
-          - "📋 Join commands available at: {{ app_directory }}/swarm-join-commands.txt"
-          - "📁 Application directory: {{ app_directory }}"
-          - "🐳 Docker Stack: {{ 'Deployed as yii2-app' if stack_file.stat.exists else 'Not deployed (docker-stack.yml missing)' }}"
+          - "🎉 Setup completed successfully!"
+          - "🌐 Application accessible at: http://{{ ansible_default_ipv4.address }}"
+          - "📋 Join tokens saved to {{ app_directory }}/swarm-join-commands.txt"
+          - "🐳 Docker Stack deployed as yii2-app"
 
   handlers:
     - name: restart nginx
