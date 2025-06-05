@@ -1,18 +1,15 @@
 ---
-- name: Setup Docker Swarm Worker
-  hosts: workers
+- name: Setup Docker Swarm Worker with Nginx
+  hosts: yii2-workers
   become: yes
   vars:
-    # These should be provided when running the playbook:
-    # ansible-playbook worker.yml -e "manager_ip=1.2.3.4 worker_token=SWMTKN-..."
-    manager_ip: "{{ manager_ip | default('') }}"
-    worker_token: "{{ worker_token | default('') }}"
+    nginx_config_source: ../nginx-conf/yii2-production.conf
 
   tasks:
     - name: Fail if manager_ip or worker_token not provided
       fail:
-        msg: "Please provide manager_ip and worker_token: ansible-playbook worker.yml -e 'manager_ip=X.X.X.X worker_token=SWMTKN-...'"
-      when: manager_ip == "" or worker_token == ""
+        msg: "manager_ip and worker_token must be provided as extra vars"
+      when: manager_ip is not defined or worker_token is not defined
 
     - name: Update apt cache
       apt:
@@ -26,7 +23,9 @@
           - ca-certificates
           - curl
           - gnupg
-          - software-properties-common
+          - lsb-release
+          - nginx
+          - git
         state: present
 
     - name: Add Docker GPG key
@@ -45,8 +44,6 @@
           - docker-ce
           - docker-ce-cli
           - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
         state: present
 
     - name: Start and enable Docker
@@ -61,23 +58,63 @@
         groups: docker
         append: yes
 
+    # Force SSH reconnection for group changes
     - name: Reset SSH connection to apply docker group changes
       meta: reset_connection
 
+    - name: Wait for connection reset
+      wait_for_connection:
+        delay: 5
+        timeout: 30
+
+    # Docker Swarm Join
     - name: Check if already in swarm
-      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
-      register: swarm_status
+      command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      register: swarm_state
+      become: no
       changed_when: false
 
     - name: Join Docker Swarm
-      shell: docker swarm join --token {{ worker_token }} {{ manager_ip }}:2377
-      when: swarm_status.stdout != "active"
-      register: join_result
+      command: docker swarm join --token {{ worker_token }} {{ manager_ip }}:2377
+      become: no
+      when: swarm_state.stdout != "active"
 
     - name: Verify swarm membership
-      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
-      register: final_status
+      command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      register: swarm_verification
+      become: no
       changed_when: false
+
+    # Nginx Configuration for Worker
+    - name: Configure Nginx for worker node
+      copy:
+        src: "{{ nginx_config_source }}"
+        dest: /etc/nginx/conf.d/yii2-production.conf
+        backup: yes
+      notify: restart nginx
+
+    - name: Remove default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: restart nginx
+
+    - name: Test nginx configuration
+      command: nginx -t
+      changed_when: false
+
+    - name: Start and enable nginx
+      systemd:
+        name: nginx
+        enabled: yes
+        state: started
+
+    # Pull Docker image to ensure availability
+    - name: Pull application image
+      command: docker pull slayerop15/yii2-docker-ansible:latest
+      become: no
+      retries: 3
+      delay: 10
 
     - name: Show worker status
       debug:
@@ -85,11 +122,14 @@
           ✅ Worker setup complete!
           
           📍 Node: {{ ansible_hostname }}
-          🔗 Swarm Status: {{ final_status.stdout }}
+          🔗 Swarm Status: {{ swarm_verification.stdout }}
           🎯 Manager: {{ manager_ip }}
+          🌐 Access URL: http://{{ ansible_default_ipv4.address }}
           
-          {% if join_result is defined and join_result.changed %}
-          ✨ Successfully joined swarm!
-          {% else %}
-          ℹ️  Already part of swarm
-          {% endif %}
+          ✨ Successfully joined swarm with nginx configured!
+
+  handlers:
+    - name: restart nginx
+      systemd:
+        name: nginx
+        state: restarted

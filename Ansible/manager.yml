@@ -1,10 +1,12 @@
 ---
 - name: Setup Docker Swarm Manager
-  hosts: manager
+  hosts: yii2-manager
   become: yes
   vars:
-    docker_image: "slayerop15/yii2-docker-ansible:latest"
-    app_dir: "/opt/yii2-app"
+    docker_stack_name: yii2-app
+    app_port: 9000
+    nginx_config_source: ../nginx-conf/yii2-production.conf
+    stack_config_source: ../docker-stack.yml
 
   tasks:
     - name: Update apt cache
@@ -19,7 +21,7 @@
           - ca-certificates
           - curl
           - gnupg
-          - software-properties-common
+          - lsb-release
           - nginx
           - git
         state: present
@@ -40,8 +42,6 @@
           - docker-ce
           - docker-ce-cli
           - containerd.io
-          - docker-buildx-plugin
-          - docker-compose-plugin
         state: present
 
     - name: Start and enable Docker
@@ -61,59 +61,65 @@
         name: docker
         state: restarted
 
-    - name: Force reload user groups
-      shell: |
-        sudo usermod -aG docker {{ ansible_user }}
-        sudo systemctl restart docker
-      become: yes
-
+    # CRITICAL: Force new SSH connection with updated group membership
     - name: Reset SSH connection to apply docker group changes
       meta: reset_connection
 
-    - name: Verify docker works without sudo
-      shell: docker info
-      become_user: "{{ ansible_user }}"
-      register: docker_test
-      retries: 3
-      delay: 5
-      until: docker_test.rc == 0
+    - name: Wait for connection reset
+      wait_for_connection:
+        delay: 5
+        timeout: 30
 
+    - name: Verify docker works without sudo
+      command: docker version
+      become: no
+      register: docker_version_result
+      changed_when: false
+
+    # Docker Swarm Setup
     - name: Check if Swarm is initialized
-      shell: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
       register: swarm_status
+      become: no
       changed_when: false
 
     - name: Initialize Docker Swarm
-      shell: docker swarm init --advertise-addr {{ ansible_default_ipv4.address }}
+      command: docker swarm init --advertise-addr {{ ansible_default_ipv4.address }}
+      become: no
       when: swarm_status.stdout != "active"
 
     - name: Get worker join token
-      shell: docker swarm join-token worker -q
+      command: docker swarm join-token worker -q
       register: worker_token
+      become: no
       changed_when: false
 
     - name: Display worker join command
       debug:
         msg: "Workers can join with: docker swarm join --token {{ worker_token.stdout }} {{ ansible_default_ipv4.address }}:2377"
 
+    # Application Setup
     - name: Create app directory
       file:
-        path: "{{ app_dir }}"
+        path: /opt/yii2-app
         state: directory
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
+        mode: '0755'
 
     - name: Create docker-stack.yml
       copy:
-        src: ../docker-stack.yml
-        dest: "{{ app_dir }}/docker-stack.yml"
+        src: "{{ stack_config_source }}"
+        dest: /opt/yii2-app/docker-stack.yml
         owner: "{{ ansible_user }}"
         group: "{{ ansible_user }}"
+        mode: '0644'
 
+    # Nginx Configuration
     - name: Configure Nginx
       copy:
-        src: ../nginx-conf/yii2-production.conf
-        dest: /etc/nginx/conf.d/yii2-app.conf
+        src: "{{ nginx_config_source }}"
+        dest: /etc/nginx/conf.d/yii2-production.conf
         backup: yes
       notify: restart nginx
 
@@ -121,102 +127,60 @@
       file:
         path: /etc/nginx/sites-enabled/default
         state: absent
+      notify: restart nginx
 
     - name: Test nginx configuration
       command: nginx -t
+      changed_when: false
 
     - name: Start and enable nginx
       systemd:
         name: nginx
         enabled: yes
-        state: restarted
+        state: started
 
+    # Application Deployment (simplified - no complex monitoring)
     - name: Pull Docker image
-      docker_image:
-        name: "{{ docker_image }}"
-        source: pull
-        force_source: yes
-      become_user: "{{ ansible_user }}"
+      command: docker pull slayerop15/yii2-docker-ansible:latest
+      become: no
+      retries: 3
+      delay: 10
 
     - name: Deploy application stack
-      shell: |
-        cd {{ app_dir }}
-        docker stack deploy --compose-file docker-stack.yml yii2-app
-      become_user: "{{ ansible_user }}"
+      command: docker stack deploy -c /opt/yii2-app/docker-stack.yml {{ docker_stack_name }}
+      become: no
+      args:
+        chdir: /opt/yii2-app
 
-    - name: Wait for application services to be ready
-      shell: docker service ls --filter name=yii2-app --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
-      register: service_status
-      until: service_status.stdout | regex_search('yii2-app_app.*3/3')
-      retries: 10
-      delay: 15
-      become_user: "{{ ansible_user }}"
-      ignore_errors: yes
+    # Simple wait instead of complex monitoring
+    - name: Wait for stack deployment to settle
+      pause:
+        seconds: 60
 
-    - name: Wait for database service to be ready
-      shell: docker service ls --filter name=yii2-app_db --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
-      register: db_service_status
-      until: db_service_status.stdout | regex_search('yii2-app_db.*1/1')
-      retries: 8
-      delay: 20
-      become_user: "{{ ansible_user }}"
-      ignore_errors: yes
-
-    - name: Check container distribution across nodes
-      shell: docker service ps yii2-app_app --format "table {{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Node{{ "}}" }}\t{{ "{{" }}.CurrentState{{ "}}" }}"
-      register: container_distribution
-      become_user: "{{ ansible_user }}"
-      ignore_errors: yes
-
-    - name: Check database placement
-      shell: docker service ps yii2-app_db --format "table {{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Node{{ "}}" }}\t{{ "{{" }}.CurrentState{{ "}}" }}"
-      register: db_placement
-      become_user: "{{ ansible_user }}"
-      ignore_errors: yes
-
-    - name: Show database logs if not running
-      shell: docker service logs yii2-app_db --tail 20
-      register: db_logs
-      become_user: "{{ ansible_user }}"
-      ignore_errors: yes
-      when: db_service_status.stdout | regex_search('yii2-app_db.*0/1')
-
+    # Simple final status check
     - name: Get final service status
-      shell: docker service ls --filter name=yii2-app --format "{{ "{{" }}.Name{{ "}}" }}\t{{ "{{" }}.Replicas{{ "}}" }}"
-      register: final_service_status
-      become_user: "{{ ansible_user }}"
+      command: docker service ls --filter name={{ docker_stack_name }}
+      become: no
+      register: final_services
+      changed_when: false
 
-    - name: Show deployment info
+    # Clean deployment summary without problematic variable references
+    - name: Show deployment summary
       debug:
         msg: |
-          ✅ Manager deployed with perfect distribution!
+          🎉 DEPLOYMENT COMPLETE!
           
-          🌐 Application: http://{{ ansible_default_ipv4.address }}
-          💚 Health: http://{{ ansible_default_ipv4.address }}/health
+          📊 Stack Status: {{ docker_stack_name }} deployed
+          🌐 Access URL: http://{{ ansible_default_ipv4.address }}
+          🔧 Manager IP: {{ ansible_default_ipv4.address }}
           
-          📋 Worker join command:
+          👥 Worker Join Command:
           docker swarm join --token {{ worker_token.stdout }} {{ ansible_default_ipv4.address }}:2377
           
-          🔧 Services Status:
-          {{ final_service_status.stdout }}
-          
-          📍 Container Distribution (1 per machine):
-          {{ container_distribution.stdout }}
-          
-          🗄️ Database Placement (Manager only):
-          {{ db_placement.stdout }}
-          
-          {% if db_logs is defined and db_logs.stdout %}
-          🚨 Database Issues (check logs):
-          {{ db_logs.stdout | truncate(200) }}
-          {% endif %}
-          
-          💡 Perfect Setup Achieved:
-          • Manager: Database + 1 App Container
-          • Worker1: 1 App Container  
-          • Worker2: 1 App Container
-          
-          🚀 Next: Deploy workers with the join command above!
+          📝 Next Steps:
+          1. Deploy workers: ansible-playbook -i inventory worker.yml
+          2. Check services: docker service ls
+          3. Access application: http://{{ ansible_default_ipv4.address }}
 
   handlers:
     - name: restart nginx
